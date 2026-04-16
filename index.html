@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>高齡 30 秒椅子站立檢測系統 (後置鏡頭版)</title>
+    <title>高齡 30 秒椅子站立檢測系統 (高穩定版)</title>
     <style>
         body { 
             font-family: '微軟正黑體', sans-serif; 
@@ -52,6 +52,13 @@
             background-color: #fff; 
             width: 100%; 
             height: auto; 
+            /* 預設不翻轉，透過按鈕加上 .flipped 類別來翻轉 */
+            transition: transform 0.3s ease; 
+        }
+
+        /* 這個 CSS Class 負責欺騙人類視覺，不影響 AI */
+        .flipped {
+            transform: scaleX(-1);
         }
 
         #overlay-text {
@@ -67,24 +74,27 @@
             pointer-events: none;
         }
 
-        .btn-group { padding: 0 10px; }
+        .btn-group { padding: 0 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; margin-bottom: 15px; }
 
         button { 
             font-size: 22px; 
             padding: 15px 0; 
             width: 100%; 
             max-width: 400px;
-            background-color: #27ae60; 
             color: white; 
             border: none; 
             border-radius: 12px; 
             cursor: pointer; 
             font-weight: bold; 
             box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
-            margin-bottom: 15px;
         }
-        button:hover { background-color: #219653; }
-        button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+        
+        #start-btn { background-color: #27ae60; }
+        #start-btn:hover { background-color: #219653; }
+        #start-btn:disabled { background-color: #95a5a6; cursor: not-allowed; }
+
+        #flip-btn { background-color: #3498db; font-size: 18px; padding: 10px 0; }
+        #flip-btn:hover { background-color: #2980b9; }
         
     </style>
 </head>
@@ -98,6 +108,7 @@
 
     <div class="btn-group">
         <button id="start-btn" type="button" onclick="startTest()">開始 30 秒測驗</button>
+        <button id="flip-btn" type="button" onclick="toggleVisualFlip()">左右方向難對準？點此切換畫面鏡像</button>
     </div>
 
     <div id="canvas-container">
@@ -109,6 +120,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
 
     <script>
+        // 你新訓練的強效版模型
         const URL = "https://teachablemachine.withgoogle.com/models/m5xSQ1Ixr/";
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycby_qjVI2e5y8oLqOLMkB9Zrm6u6i6_RT5jVTleP1PO5zem226-xJIOi7fntufJm7GJHSA/exec";
         
@@ -118,9 +130,20 @@
         let isTesting = false; 
         let timeLeft = 30.0;
         let timerInterval = null;
+        
+        // --- 新增：防抖動(冷卻)機制變數 ---
+        let lastCountTime = 0; 
+        const COOLDOWN_MS = 1200; // 1.2 秒內只允許計數一次
+        
         const CONFIDENCE_THRESHOLD = 0.85;
 
         window.onload = init;
+
+        // 視覺翻轉切換功能 (只改 CSS，不改 AI 資料)
+        function toggleVisualFlip() {
+            const canvas = document.getElementById("canvas");
+            canvas.classList.toggle("flipped");
+        }
 
         async function init() {
             document.getElementById("start-btn").innerText = "模型與相機載入中...";
@@ -133,11 +156,10 @@
                 const camWidth = 480;
                 const camHeight = 640;
                 
-                // 【修正處 1】將 flip 設為 false，因為後置鏡頭不需要鏡像翻轉
+                // AI 讀取的底層維持 false，保持原汁原味
                 const flip = false; 
                 webcam = new tmPose.Webcam(camWidth, camHeight, flip); 
                 
-                // 【修正處 2】在 setup 時指定使用後置鏡頭 (facingMode: "environment")
                 await webcam.setup({ facingMode: "environment" }); 
                 
                 await webcam.play();
@@ -181,6 +203,9 @@
             count = 0;
             timeLeft = 30.0;
             isTesting = true;
+            lastCountTime = 0; // 重置冷卻時間
+            currentState = "Sit"; // 預設初始狀態為坐下
+            
             document.getElementById("count-display").innerText = "0";
             document.getElementById("status-display").innerText = "測驗進行中...";
             document.getElementById("status-display").style.color = "#e74c3c";
@@ -249,19 +274,27 @@
                 }
             }
 
+            // --- 升級版計數邏輯 (含防抖冷卻) ---
             if (highestProbability > CONFIDENCE_THRESHOLD) {
+                let currentTime = Date.now(); // 取得當下時間
+
                 if (detectedPose === "Stand" || detectedPose === "站立" || detectedPose === "起立") {
                     currentState = "Stand";
                 } 
                 else if (detectedPose === "Sit" || detectedPose === "坐下") {
+                    
+                    // 必須正在測驗，且上一個狀態是 Stand，且距離上次計數已經過了 1.2 秒
                     if (currentState === "Stand" && isTesting) {
-                        count++;
-                        document.getElementById("count-display").innerText = count;
+                        if (currentTime - lastCountTime > COOLDOWN_MS) {
+                            count++;
+                            document.getElementById("count-display").innerText = count;
+                            lastCountTime = currentTime; // 記錄這次得分的時間
+                        }
                     }
-                    currentState = "Sit";
+                    currentState = "Sit"; // 歸位
                 }
                 else {
-                    currentState = "None";
+                    // 若無人，狀態保留，避免干擾
                 }
             }
 
