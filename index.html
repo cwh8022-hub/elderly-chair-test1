@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>高齡 30 秒椅子站立檢測系統 (高穩定版)</title>
+    <title>高齡 30 秒椅子站立檢測系統 (極致靈敏後置版)</title>
     <style>
         body { 
             font-family: '微軟正黑體', sans-serif; 
@@ -52,11 +52,10 @@
             background-color: #fff; 
             width: 100%; 
             height: auto; 
-            /* 預設不翻轉，透過按鈕加上 .flipped 類別來翻轉 */
             transition: transform 0.3s ease; 
         }
 
-        /* 這個 CSS Class 負責欺騙人類視覺，不影響 AI */
+        /* 欺騙視覺用的左右翻轉 */
         .flipped {
             transform: scaleX(-1);
         }
@@ -108,7 +107,7 @@
 
     <div class="btn-group">
         <button id="start-btn" type="button" onclick="startTest()">開始 30 秒測驗</button>
-        <button id="flip-btn" type="button" onclick="toggleVisualFlip()">左右方向難對準？點此切換畫面鏡像</button>
+        <button id="flip-btn" type="button" onclick="toggleVisualFlip()">點此切換畫面左右方向</button>
     </div>
 
     <div id="canvas-container">
@@ -120,7 +119,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
 
     <script>
-        // 你新訓練的強效版模型
+        // 你最新的模型網址
         const URL = "https://teachablemachine.withgoogle.com/models/m5xSQ1Ixr/";
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycby_qjVI2e5y8oLqOLMkB9Zrm6u6i6_RT5jVTleP1PO5zem226-xJIOi7fntufJm7GJHSA/exec";
         
@@ -130,16 +129,10 @@
         let isTesting = false; 
         let timeLeft = 30.0;
         let timerInterval = null;
-        
-        // --- 新增：防抖動(冷卻)機制變數 ---
-        let lastCountTime = 0; 
-        const COOLDOWN_MS = 1200; // 1.2 秒內只允許計數一次
-        
-        const CONFIDENCE_THRESHOLD = 0.85;
+        const CONFIDENCE_THRESHOLD = 0.85; // 保持原本的高信心門檻
 
         window.onload = init;
 
-        // 視覺翻轉切換功能 (只改 CSS，不改 AI 資料)
         function toggleVisualFlip() {
             const canvas = document.getElementById("canvas");
             canvas.classList.toggle("flipped");
@@ -156,10 +149,11 @@
                 const camWidth = 480;
                 const camHeight = 640;
                 
-                // AI 讀取的底層維持 false，保持原汁原味
+                // 【關鍵】AI 底層不鏡像，吃最原始的數據
                 const flip = false; 
                 webcam = new tmPose.Webcam(camWidth, camHeight, flip); 
                 
+                // 【關鍵】指定後置環境鏡頭
                 await webcam.setup({ facingMode: "environment" }); 
                 
                 await webcam.play();
@@ -200,11 +194,11 @@
             overlay.innerText = "GO!";
             setTimeout(() => { overlay.style.display = "none"; }, 800);
 
+            // 正式開始
             count = 0;
             timeLeft = 30.0;
             isTesting = true;
-            lastCountTime = 0; // 重置冷卻時間
-            currentState = "Sit"; // 預設初始狀態為坐下
+            currentState = "Sit"; // 回歸預設坐下狀態
             
             document.getElementById("count-display").innerText = "0";
             document.getElementById("status-display").innerText = "測驗進行中...";
@@ -274,27 +268,21 @@
                 }
             }
 
-            // --- 升級版計數邏輯 (含防抖冷卻) ---
+            // 【完全回歸原始超靈敏計數邏輯，無冷卻時間】
             if (highestProbability > CONFIDENCE_THRESHOLD) {
-                let currentTime = Date.now(); // 取得當下時間
-
                 if (detectedPose === "Stand" || detectedPose === "站立" || detectedPose === "起立") {
                     currentState = "Stand";
                 } 
                 else if (detectedPose === "Sit" || detectedPose === "坐下") {
-                    
-                    // 必須正在測驗，且上一個狀態是 Stand，且距離上次計數已經過了 1.2 秒
+                    // 只要前一刻是站，現在判定是坐，且在測驗中，立刻毫秒級 +1
                     if (currentState === "Stand" && isTesting) {
-                        if (currentTime - lastCountTime > COOLDOWN_MS) {
-                            count++;
-                            document.getElementById("count-display").innerText = count;
-                            lastCountTime = currentTime; // 記錄這次得分的時間
-                        }
+                        count++;
+                        document.getElementById("count-display").innerText = count;
                     }
                     currentState = "Sit"; // 歸位
                 }
                 else {
-                    // 若無人，狀態保留，避免干擾
+                    currentState = "None";
                 }
             }
 
